@@ -80,6 +80,9 @@ static const video_renderer_list_entry_t video_renderers[] = {
 #if defined(HAS_GSTREAMER_RENDERER)
     {"gstreamer", "GStreamer H.264 renderer", video_renderer_gstreamer_init},
 #endif
+#if defined(HAS_RESTREAM_RENDERER)
+    {"restream", "Restream video renderer", video_renderer_restream_init},
+#endif
 #if defined(HAS_DUMMY_RENDERER)
     {"dummy", "Dummy renderer; does not actually display video", video_renderer_dummy_init},
 #endif
@@ -91,6 +94,9 @@ static const audio_renderer_list_entry_t audio_renderers[] = {
 #endif
 #if defined(HAS_GSTREAMER_RENDERER)
     {"gstreamer", "GStreamer audio renderer", audio_renderer_gstreamer_init},
+#endif
+#if defined(HAS_RESTREAM_RENDERER)
+    {"restream", "Restream audio renderer", audio_renderer_restream_init},
 #endif
 #if defined(HAS_DUMMY_RENDERER)
     {"dummy", "Dummy renderer; does not actually play audio", audio_renderer_dummy_init},

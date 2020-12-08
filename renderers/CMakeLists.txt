@@ -11,8 +11,9 @@ if( CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)" )
 endif()
 
 # Always compile the dummy renderers
-set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_DUMMY_RENDERER" )
+set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_DUMMY_RENDERER -DHAS_RESTREAM_RENDERER" )
 set( RENDERER_SOURCES audio_renderer_dummy.c video_renderer_dummy.c )
+set( RENDERER_SOURCES ${RENDERER_SOURCES} audio_renderer_restream.c video_renderer_restream.c )
 set( RENDERER_LINK_LIBS "" )
 set( RENDERER_INCLUDE_DIRS "" )
 
