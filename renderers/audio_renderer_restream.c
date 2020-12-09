@@ -26,8 +26,11 @@
 #include <stdbool.h>
 #include <unistd.h>
 
+extern video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts);
+
 typedef struct audio_renderer_restream_s {
     audio_renderer_t base;
+    video_renderer_t *video_renderer;
 } audio_renderer_restream_t;
 
 static const audio_renderer_funcs_t audio_renderer_restream_funcs;
@@ -41,6 +44,9 @@ audio_renderer_t *audio_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.logger = logger;
     renderer->base.funcs = &audio_renderer_restream_funcs;
     renderer->base.type = AUDIO_RENDERER_RESTREAM;
+
+    renderer->video_renderer = video_renderer;
+
     return &renderer->base;
 }
 
@@ -48,6 +54,8 @@ static void audio_renderer_restream_start(audio_renderer_t *renderer) {
 }
 
 static void audio_renderer_restream_render_buffer(audio_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts) {
+    audio_renderer_restream_t* restream_renderer = (audio_renderer_restream_t*)renderer;
+    video_renderer_restream_get_audio(restream_renderer->video_renderer, ntp, data, data_len, pts);
 }
 
 static void audio_renderer_restream_set_volume(audio_renderer_t *renderer, float volume) {

@@ -29,6 +29,19 @@ if( BUILD_RESTREAM )
   set( RENDERER_SOURCES ${RENDERER_SOURCES} audio_renderer_restream.c video_renderer_restream.c )
   set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_RESTREAM_RENDERER")
   set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} avformat avcodec avutil )
+
+  add_subdirectory( fdk-aac )
+
+  include_directories( fdk-aac/libAACdec/include
+    fdk-aac/libAACenc/include
+    fdk-aac/libFDK/include
+    fdk-aac/libMpegTPDec/include
+    fdk-aac/libMpegTPEnc/include
+    fdk-aac/libPCMutils/include
+    fdk-aac/libSBRdec/include
+    fdk-aac/libSBRenc/include
+    fdk-aac/libSYS/include )
+  set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} fdk-aac )
 endif()
 
 if( BRCM_GLES_V2 AND BRCM_EGL AND OPENMAXIL AND BCM_HOST AND VCOS AND VCHIQ_ARM )

@@ -28,15 +28,51 @@
 
 #include <libavformat/avformat.h>
 
+#include "fdk-aac/libAACdec/include/aacdecoder_lib.h"
+
 typedef struct video_renderer_restream_s {
     video_renderer_t base;
     AVFormatContext* ofmt_ctx;
     AVStream* video_out;
     AVStream* audio_out;
     AVPacket pkt;
+    AVPacket pkt_audio;
+
+    HANDLE_AACDECODER audio_decoder;
 } video_renderer_restream_t;
 
 static const video_renderer_funcs_t video_renderer_restream_funcs;
+
+static int AUDIO_PACKET_SIZE = 4 * 480;
+
+static int video_renderer_restream_init_audio_decoder(video_renderer_restream_t *renderer) {
+    int ret = 0;
+    renderer->audio_decoder = aacDecoder_Open(TT_MP4_RAW, 1);
+    if (renderer->audio_decoder == NULL) {
+        logger_log(renderer->base.logger, LOGGER_ERR, "aacDecoder open faild!");
+        return -1;
+    }
+    /* ASC config binary data */
+    UCHAR eld_conf[] = { 0xF8, 0xE8, 0x50, 0x00 };
+    UCHAR *conf[] = { eld_conf };
+    static UINT conf_len = sizeof(eld_conf);
+    ret = aacDecoder_ConfigRaw(renderer->audio_decoder, conf, &conf_len);
+    if (ret != AAC_DEC_OK) {
+        logger_log(renderer->base.logger, LOGGER_ERR, "Unable to set configRaw");
+        return -2;
+    }
+    CStreamInfo *aac_stream_info = aacDecoder_GetStreamInfo(renderer->audio_decoder);
+    if (aac_stream_info == NULL) {
+        logger_log(renderer->base.logger, LOGGER_ERR, "aacDecoder_GetStreamInfo failed!");
+        return -3;
+    }
+
+    logger_log(renderer->base.logger, LOGGER_DEBUG, "> stream info: channel = %d\tsample_rate = %d\tframe_size = %d\taot = %d\tbitrate = %d",   \
+            aac_stream_info->channelConfig, aac_stream_info->aacSampleRate,
+            aac_stream_info->aacSamplesPerFrame, aac_stream_info->aot, aac_stream_info->bitRate);
+
+    return 0;
+}
 
 video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_config_t const *config) {
     video_renderer_restream_t *renderer;
@@ -48,10 +84,10 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.funcs = &video_renderer_restream_funcs;
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
 
-    static char* out_filename = "test.ts";
+    static char* out_filename = "test.mkv";
 
     // init format
-    avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "mpegts", out_filename);
+    avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "matroska", out_filename);
     if (!renderer->ofmt_ctx) {
         fprintf(stderr, "Could not create output context\n");
         exit(1);
@@ -67,10 +103,36 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->video_out->codecpar->codec_id = AV_CODEC_ID_H264;
     renderer->video_out->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
     renderer->video_out->codecpar->codec_tag = 0;
+    // TODO: just testing with these
+    renderer->video_out->codecpar->width = 1920;
+    renderer->video_out->codecpar->height = 1080;
+
+    // mkv expects extradata to be non-empty, for streaming you have to insert NAL units apparently:
+    // https://stackoverflow.com/questions/56620131/initializing-an-output-file-for-muxing-mkv-with-ffmpeg
+    const int buf_size = 1024;
+    renderer->video_out->codecpar->extradata = (uint8_t*)av_malloc(buf_size);
+    renderer->video_out->codecpar->extradata_size = buf_size;
+
+    renderer->audio_out = avformat_new_stream(renderer->ofmt_ctx, NULL);
+    if (!renderer->audio_out) {
+        fprintf(stderr, "Failed allocating output stream\n");
+        exit(1);
+    }
+    renderer->audio_out->codecpar = avcodec_parameters_alloc();
+    // renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_AAC;
+    renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
+    renderer->audio_out->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+    renderer->audio_out->codecpar->codec_tag = 0;
+    renderer->audio_out->codecpar->sample_rate = 44100;
+    renderer->audio_out->codecpar->channels = 2;
+    // renderer->audio_out->codecpar->channel_layout = 0;
+    renderer->audio_out->codecpar->channel_layout = 0b11;
 
     // TODO: stream output instead of file
     AVOutputFormat* ofmt = renderer->ofmt_ctx->oformat;
     if (!(ofmt->flags & AVFMT_NOFILE)) {
+        fprintf(stdout, "Opening output file\n");
+
         int ret = avio_open(&renderer->ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
         if (ret < 0) {
             exit(1);
@@ -79,37 +141,101 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     // write header
     int ret = avformat_write_header(renderer->ofmt_ctx, NULL);
     if (ret < 0) {
-        fprintf(stderr, "Error occurred when opening output file\n");
+        fprintf(stderr, "Error occurred when opening output file. Ret: %d\n", ret);
         exit(1);
     }
 
     // init packets
     av_init_packet(&renderer->pkt);
+    av_new_packet(&renderer->pkt_audio, AUDIO_PACKET_SIZE);
+
+    // init audio decoding
+    int err = video_renderer_restream_init_audio_decoder(renderer);
+    if (err) {
+        printf("Opening audio decoder failed.\n");
+        exit(1);
+    }
 
     return &renderer->base;
 }
 
 static void video_renderer_restream_start(video_renderer_t *renderer) {}
 
-static void video_renderer_restream_render_buffer(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts, int type) {
-    printf("Received %d bytes of data with pts %ld...\n", data_len, pts);
+void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts) {
+    if (data_len == 0) {
+        return;
+    }
 
+    video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
+    const AVStream* out_stream = restream_renderer->audio_out;
+
+    // decode AAC-ELD packets
+    UCHAR *p_buffer[1] = { data };
+    UINT buffer_size = data_len;
+    UINT bytes_valid = data_len;
+    AAC_DECODER_ERROR error = 0;
+    error = aacDecoder_Fill(restream_renderer->audio_decoder, p_buffer, &buffer_size, &bytes_valid);
+
+    fprintf(stdout, "buffer_size: %u, bytes_valid: %u\n", buffer_size, bytes_valid);
+
+    if (error != AAC_DEC_OK) {
+        fprintf(stderr, "aacDecoder_Fill error\n");
+        exit(1);
+    }
+
+    INT time_data_size = AUDIO_PACKET_SIZE;
+    INT_PCM *p_time_data = malloc(time_data_size); // The buffer for the decoded AAC frames
+    error = aacDecoder_DecodeFrame(restream_renderer->audio_decoder, p_time_data, time_data_size, 0);
+    if (error != AAC_DEC_OK) {
+        fprintf(stderr, "aacDecoder_DecodeFrame error\n");
+        exit(1);
+    }
+
+    // mux decoded PCM data
+    const AVRational timebase_in = av_make_q(1, 1000000);
+    int64_t packet_pts = av_rescale_q_rnd(
+        pts,
+        timebase_in,
+        out_stream->time_base,
+        AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+
+    // set packet metadata
+    restream_renderer->pkt_audio.stream_index = out_stream->index;
+    restream_renderer->pkt_audio.pts = packet_pts;
+    restream_renderer->pkt_audio.dts = packet_pts;
+    restream_renderer->pkt_audio.duration = 0;
+    restream_renderer->pkt_audio.pos = -1;
+
+    // set packet payload
+    // restream_renderer->pkt.data = p_time_data;
+    memcpy(restream_renderer->pkt_audio.data, p_time_data, time_data_size);
+    restream_renderer->pkt_audio.size = time_data_size;
+
+    int ret = av_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
+    // int ret = av_interleaved_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
+    if (ret < 0) {
+        fprintf(stderr, "Error muxing packet\n");
+        exit(1);
+    }
+
+    free(p_time_data);
+}
+
+static void video_renderer_restream_render_buffer(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts, int type) {
     video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
 
     restream_renderer->pkt.stream_index = 0;
     const AVStream* out_stream = restream_renderer->video_out;
 
-    const uint64_t ntp_packet_time = raop_ntp_get_local_time(ntp);
-
-    // match the ntp time to the speed of the H.264 stream
     const AVRational timebase_in = av_make_q(1, 1000000);
     int64_t packet_pts = av_rescale_q_rnd(
-        ntp_packet_time,
+        pts,
         timebase_in,
-        restream_renderer->video_out->time_base,
+        out_stream->time_base,
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
 
     // set packet metadata
+    restream_renderer->pkt.stream_index = out_stream->index;
     restream_renderer->pkt.pts = packet_pts;
     restream_renderer->pkt.dts = packet_pts;
     restream_renderer->pkt.duration = 0;
