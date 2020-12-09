@@ -39,6 +39,8 @@ typedef struct video_renderer_restream_s {
     AVPacket pkt_audio;
 
     HANDLE_AACDECODER audio_decoder;
+    uint64_t last_video_pts;
+    uint64_t last_audio_pts;
 } video_renderer_restream_t;
 
 static const video_renderer_funcs_t video_renderer_restream_funcs;
@@ -102,6 +104,7 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->video_out->codecpar = avcodec_parameters_alloc();
     renderer->video_out->codecpar->codec_id = AV_CODEC_ID_H264;
     renderer->video_out->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
+    renderer->video_out->codecpar->format = AV_PIX_FMT_YUV420P;
     renderer->video_out->codecpar->codec_tag = 0;
     // TODO: just testing with these
     renderer->video_out->codecpar->width = 1920;
@@ -156,6 +159,9 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
         exit(1);
     }
 
+    renderer->last_video_pts = 0;
+    renderer->last_audio_pts = 0;
+
     return &renderer->base;
 }
 
@@ -199,6 +205,14 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
         out_stream->time_base,
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
 
+    if (packet_pts == 0) {
+        packet_pts = restream_renderer->last_audio_pts + 1;
+    } else if (packet_pts < restream_renderer->last_audio_pts) {
+        return;
+    }
+
+    restream_renderer->last_audio_pts = packet_pts;
+
     // set packet metadata
     restream_renderer->pkt_audio.stream_index = out_stream->index;
     restream_renderer->pkt_audio.pts = packet_pts;
@@ -233,6 +247,16 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
         timebase_in,
         out_stream->time_base,
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+
+    // matroska needs monotonically increasing pts
+    // packets which contain sps and pps have pts 0, so generate an artificial pts
+    if (packet_pts == 0) {
+        packet_pts = restream_renderer->last_video_pts + 1;
+    } else if (packet_pts < restream_renderer->last_video_pts) {
+        return;
+    }
+
+    restream_renderer->last_video_pts = packet_pts;
 
     // set packet metadata
     restream_renderer->pkt.stream_index = out_stream->index;
