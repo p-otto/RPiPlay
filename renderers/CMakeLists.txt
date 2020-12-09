@@ -28,7 +28,7 @@ find_library( VCHIQ_ARM vchiq_arm HINTS ${CMAKE_SYSROOT}/opt/vc/lib/ )
 if( BUILD_RESTREAM )
   set( RENDERER_SOURCES ${RENDERER_SOURCES} audio_renderer_restream.c video_renderer_restream.c )
   set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_RESTREAM_RENDERER")
-  set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} avformat avcodec )
+  set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} avformat avcodec avutil )
 endif()
 
 if( BRCM_GLES_V2 AND BRCM_EGL AND OPENMAXIL AND BCM_HOST AND VCOS AND VCHIQ_ARM )

@@ -52,7 +52,6 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
 
     // init format
     avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "mpegts", out_filename);
-    // avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "rawvideo", out_filename);
     if (!renderer->ofmt_ctx) {
         fprintf(stderr, "Could not create output context\n");
         exit(1);
@@ -64,7 +63,6 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
         fprintf(stderr, "Failed allocating output stream\n");
         exit(1);
     }
-    // TODO: fill video_out->codecpar
     renderer->video_out->codecpar = avcodec_parameters_alloc();
     renderer->video_out->codecpar->codec_id = AV_CODEC_ID_H264;
     renderer->video_out->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
@@ -91,8 +89,7 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     return &renderer->base;
 }
 
-static void video_renderer_restream_start(video_renderer_t *renderer) {
-}
+static void video_renderer_restream_start(video_renderer_t *renderer) {}
 
 static void video_renderer_restream_render_buffer(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts, int type) {
     printf("Received %d bytes of data with pts %ld...\n", data_len, pts);
@@ -100,21 +97,25 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
     video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
 
     restream_renderer->pkt.stream_index = 0;
-    AVStream* out_stream = restream_renderer->video_out;
+    const AVStream* out_stream = restream_renderer->video_out;
 
-    uint64_t current_packet_time = raop_ntp_get_local_time(ntp);
-    static int64_t first_packet_time = -1;
-    if (first_packet_time == -1) {
-        first_packet_time = current_packet_time;
-    }
+    const uint64_t ntp_packet_time = raop_ntp_get_local_time(ntp);
 
-    // pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-    // pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-    restream_renderer->pkt.pts = current_packet_time;
-    restream_renderer->pkt.dts = current_packet_time;
+    // match the ntp time to the speed of the H.264 stream
+    const AVRational timebase_in = av_make_q(1, 1000000);
+    int64_t packet_pts = av_rescale_q_rnd(
+        ntp_packet_time,
+        timebase_in,
+        restream_renderer->video_out->time_base,
+        AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+
+    // set packet metadata
+    restream_renderer->pkt.pts = packet_pts;
+    restream_renderer->pkt.dts = packet_pts;
     restream_renderer->pkt.duration = 0;
     restream_renderer->pkt.pos = -1;
 
+    // set packet payload
     restream_renderer->pkt.data = data;
     restream_renderer->pkt.size = data_len;
 
@@ -125,8 +126,7 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
     }
 }
 
-static void video_renderer_restream_flush(video_renderer_t *renderer) {
-}
+static void video_renderer_restream_flush(video_renderer_t *renderer) {}
 
 static void video_renderer_restream_destroy(video_renderer_t *renderer) {
     video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
@@ -139,9 +139,7 @@ static void video_renderer_restream_destroy(video_renderer_t *renderer) {
     }
 }
 
-static void video_renderer_restream_update_background(video_renderer_t *renderer, int type) {
-
-}
+static void video_renderer_restream_update_background(video_renderer_t *renderer, int type) {}
 
 static const video_renderer_funcs_t video_renderer_restream_funcs = {
     .start = video_renderer_restream_start,
