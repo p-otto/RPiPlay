@@ -26,8 +26,14 @@
 #include <stdbool.h>
 #include <unistd.h>
 
+#include <libavformat/avformat.h>
+
 typedef struct video_renderer_restream_s {
     video_renderer_t base;
+    AVFormatContext* ofmt_ctx;
+    AVStream* video_out;
+    AVStream* audio_out;
+    AVPacket pkt;
 } video_renderer_restream_t;
 
 static const video_renderer_funcs_t video_renderer_restream_funcs;
@@ -41,6 +47,47 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.logger = logger;
     renderer->base.funcs = &video_renderer_restream_funcs;
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
+
+    static char* out_filename = "test.ts";
+
+    // init format
+    avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "mpegts", out_filename);
+    // avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "rawvideo", out_filename);
+    if (!renderer->ofmt_ctx) {
+        fprintf(stderr, "Could not create output context\n");
+        exit(1);
+    }
+
+    // init streams
+    renderer->video_out = avformat_new_stream(renderer->ofmt_ctx, NULL);
+    if (!renderer->video_out) {
+        fprintf(stderr, "Failed allocating output stream\n");
+        exit(1);
+    }
+    // TODO: fill video_out->codecpar
+    renderer->video_out->codecpar = avcodec_parameters_alloc();
+    renderer->video_out->codecpar->codec_id = AV_CODEC_ID_H264;
+    renderer->video_out->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
+    renderer->video_out->codecpar->codec_tag = 0;
+
+    // TODO: stream output instead of file
+    AVOutputFormat* ofmt = renderer->ofmt_ctx->oformat;
+    if (!(ofmt->flags & AVFMT_NOFILE)) {
+        int ret = avio_open(&renderer->ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
+        if (ret < 0) {
+            exit(1);
+        }
+    }
+    // write header
+    int ret = avformat_write_header(renderer->ofmt_ctx, NULL);
+    if (ret < 0) {
+        fprintf(stderr, "Error occurred when opening output file\n");
+        exit(1);
+    }
+
+    // init packets
+    av_init_packet(&renderer->pkt);
+
     return &renderer->base;
 }
 
@@ -48,13 +95,45 @@ static void video_renderer_restream_start(video_renderer_t *renderer) {
 }
 
 static void video_renderer_restream_render_buffer(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts, int type) {
-    printf("Received %d bytes of data...\n", data_len);
+    printf("Received %d bytes of data with pts %ld...\n", data_len, pts);
+
+    video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
+
+    restream_renderer->pkt.stream_index = 0;
+    AVStream* out_stream = restream_renderer->video_out;
+
+    uint64_t current_packet_time = raop_ntp_get_local_time(ntp);
+    static int64_t first_packet_time = -1;
+    if (first_packet_time == -1) {
+        first_packet_time = current_packet_time;
+    }
+
+    // pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+    // pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+    restream_renderer->pkt.pts = current_packet_time;
+    restream_renderer->pkt.dts = current_packet_time;
+    restream_renderer->pkt.duration = 0;
+    restream_renderer->pkt.pos = -1;
+
+    restream_renderer->pkt.data = data;
+    restream_renderer->pkt.size = data_len;
+
+    int ret = av_interleaved_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt);
+    if (ret < 0) {
+        fprintf(stderr, "Error muxing packet\n");
+        exit(1);
+    }
 }
 
 static void video_renderer_restream_flush(video_renderer_t *renderer) {
 }
 
 static void video_renderer_restream_destroy(video_renderer_t *renderer) {
+    video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
+    av_write_trailer(restream_renderer->ofmt_ctx);
+    avio_closep(&restream_renderer->ofmt_ctx->pb);
+    avformat_free_context(restream_renderer->ofmt_ctx);
+
     if (renderer) {
         free(renderer);
     }

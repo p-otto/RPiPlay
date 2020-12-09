@@ -11,11 +11,11 @@ if( CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)" )
 endif()
 
 # Always compile the dummy renderers
-set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_DUMMY_RENDERER -DHAS_RESTREAM_RENDERER" )
+set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_DUMMY_RENDERER" )
 set( RENDERER_SOURCES audio_renderer_dummy.c video_renderer_dummy.c )
-set( RENDERER_SOURCES ${RENDERER_SOURCES} audio_renderer_restream.c video_renderer_restream.c )
 set( RENDERER_LINK_LIBS "" )
 set( RENDERER_INCLUDE_DIRS "" )
+set( BUILD_RESTREAM TRUE )
 
 # Check for availability of OpenMAX libraries on Raspberry Pi
 find_library( BRCM_GLES_V2 brcmGLESv2 HINTS ${CMAKE_SYSROOT}/opt/vc/lib/ )
@@ -24,6 +24,12 @@ find_library( OPENMAXIL openmaxil HINTS ${CMAKE_SYSROOT}/opt/vc/lib/ )
 find_library( BCM_HOST bcm_host HINTS ${CMAKE_SYSROOT}/opt/vc/lib/ )
 find_library( VCOS vcos HINTS ${CMAKE_SYSROOT}/opt/vc/lib/ )
 find_library( VCHIQ_ARM vchiq_arm HINTS ${CMAKE_SYSROOT}/opt/vc/lib/ )
+
+if( BUILD_RESTREAM )
+  set( RENDERER_SOURCES ${RENDERER_SOURCES} audio_renderer_restream.c video_renderer_restream.c )
+  set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_RESTREAM_RENDERER")
+  set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} avformat avcodec )
+endif()
 
 if( BRCM_GLES_V2 AND BRCM_EGL AND OPENMAXIL AND BCM_HOST AND VCOS AND VCHIQ_ARM )
   # We have OpenMAX libraries available! Use them!
