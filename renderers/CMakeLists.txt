@@ -31,7 +31,6 @@ if( BUILD_RESTREAM )
   set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} avformat avcodec avutil )
 
   add_subdirectory( fdk-aac )
-  add_subdirectory( h264-bitstream )
 
   include_directories( fdk-aac/libAACdec/include
     fdk-aac/libAACenc/include
@@ -43,7 +42,6 @@ if( BUILD_RESTREAM )
     fdk-aac/libSBRenc/include
     fdk-aac/libSYS/include )
   set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} fdk-aac )
-  set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} h264-bitstream )
 endif()
 
 if( BRCM_GLES_V2 AND BRCM_EGL AND OPENMAXIL AND BCM_HOST AND VCOS AND VCHIQ_ARM )

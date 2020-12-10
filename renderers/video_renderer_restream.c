@@ -87,8 +87,7 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.funcs = &video_renderer_restream_funcs;
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
 
-    static char* out_filename = "test.mkv";
-    // static char* out_filename = "tcp://localhost:9999";
+    static char* out_filename = "tcp://localhost:9999";
 
     // init format
     avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "matroska", out_filename);
@@ -118,22 +117,21 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->video_out->codecpar->extradata = (uint8_t*)av_malloc(buf_size);
     renderer->video_out->codecpar->extradata_size = buf_size;
 
-    renderer->audio_out = avformat_new_stream(renderer->ofmt_ctx, NULL);
-    if (!renderer->audio_out) {
-        fprintf(stderr, "Failed allocating output stream\n");
-        exit(1);
-    }
-    renderer->audio_out->codecpar = avcodec_parameters_alloc();
-    // renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_AAC;
-    renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
-    renderer->audio_out->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
-    renderer->audio_out->codecpar->codec_tag = 0;
-    renderer->audio_out->codecpar->sample_rate = 44100;
-    renderer->audio_out->codecpar->channels = 2;
-    // renderer->audio_out->codecpar->channel_layout = 0;
-    renderer->audio_out->codecpar->channel_layout = 0b11;
+    // renderer->audio_out = avformat_new_stream(renderer->ofmt_ctx, NULL);
+    // if (!renderer->audio_out) {
+    //     fprintf(stderr, "Failed allocating output stream\n");
+    //     exit(1);
+    // }
+    // renderer->audio_out->codecpar = avcodec_parameters_alloc();
+    // // renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_AAC;
+    // renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
+    // renderer->audio_out->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+    // renderer->audio_out->codecpar->codec_tag = 0;
+    // renderer->audio_out->codecpar->sample_rate = 44100;
+    // renderer->audio_out->codecpar->channels = 2;
+    // // renderer->audio_out->codecpar->channel_layout = 0;
+    // renderer->audio_out->codecpar->channel_layout = 0b11;
 
-    // TODO: stream output instead of file
     AVOutputFormat* ofmt = renderer->ofmt_ctx->oformat;
     if (!(ofmt->flags & AVFMT_NOFILE)) {
         fprintf(stdout, "Opening output file\n");
@@ -144,7 +142,10 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
         }
     }
     // write header
-    int ret = avformat_write_header(renderer->ofmt_ctx, NULL);
+    AVDictionary *options = NULL;
+    av_dict_set(&options, "live", "1", 0);
+
+    int ret = avformat_write_header(renderer->ofmt_ctx, &options);
     if (ret < 0) {
         fprintf(stderr, "Error occurred when opening output file. Ret: %d\n", ret);
         exit(1);
@@ -174,66 +175,66 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
         return;
     }
 
-    video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
-    const AVStream* out_stream = restream_renderer->audio_out;
+    // video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
+    // const AVStream* out_stream = restream_renderer->audio_out;
 
-    // decode AAC-ELD packets
-    UCHAR *p_buffer[1] = { data };
-    UINT buffer_size = data_len;
-    UINT bytes_valid = data_len;
-    AAC_DECODER_ERROR error = 0;
-    error = aacDecoder_Fill(restream_renderer->audio_decoder, p_buffer, &buffer_size, &bytes_valid);
+    // // decode AAC-ELD packets
+    // UCHAR *p_buffer[1] = { data };
+    // UINT buffer_size = data_len;
+    // UINT bytes_valid = data_len;
+    // AAC_DECODER_ERROR error = 0;
+    // error = aacDecoder_Fill(restream_renderer->audio_decoder, p_buffer, &buffer_size, &bytes_valid);
 
-    if (error != AAC_DEC_OK) {
-        fprintf(stderr, "aacDecoder_Fill error\n");
-        exit(1);
-    }
+    // if (error != AAC_DEC_OK) {
+    //     fprintf(stderr, "aacDecoder_Fill error\n");
+    //     exit(1);
+    // }
 
-    INT time_data_size = AUDIO_PACKET_SIZE;
-    INT_PCM *p_time_data = malloc(time_data_size); // The buffer for the decoded AAC frames
-    error = aacDecoder_DecodeFrame(restream_renderer->audio_decoder, p_time_data, time_data_size, 0);
-    if (error != AAC_DEC_OK) {
-        fprintf(stderr, "aacDecoder_DecodeFrame error\n");
-        exit(1);
-    }
+    // INT time_data_size = AUDIO_PACKET_SIZE;
+    // INT_PCM *p_time_data = malloc(time_data_size); // The buffer for the decoded AAC frames
+    // error = aacDecoder_DecodeFrame(restream_renderer->audio_decoder, p_time_data, time_data_size, 0);
+    // if (error != AAC_DEC_OK) {
+    //     fprintf(stderr, "aacDecoder_DecodeFrame error\n");
+    //     exit(1);
+    // }
 
-    // mux decoded PCM data
-    const AVRational timebase_in = av_make_q(1, 1000000);
-    int64_t packet_pts = av_rescale_q_rnd(
-        pts,
-        timebase_in,
-        out_stream->time_base,
-        AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+    // // mux decoded PCM data
+    // const AVRational timebase_in = av_make_q(1, 1000000);
+    // int64_t packet_pts = av_rescale_q_rnd(
+    //     pts,
+    //     timebase_in,
+    //     out_stream->time_base,
+    //     AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
 
-    if (packet_pts == 0) {
-        packet_pts = restream_renderer->last_audio_pts + 1;
-    } else if (packet_pts <= restream_renderer->last_audio_pts) {
-        fprintf(stdout, "Warning: dropping audio frame to avoid non-monotonic dts\n");
-        return;
-    }
+    // if (packet_pts == 0) {
+    //     packet_pts = restream_renderer->last_audio_pts + 1;
+    // } else if (packet_pts <= restream_renderer->last_audio_pts) {
+    //     fprintf(stdout, "Warning: dropping audio frame to avoid non-monotonic dts\n");
+    //     return;
+    // }
 
-    restream_renderer->last_audio_pts = packet_pts;
+    // restream_renderer->last_audio_pts = packet_pts;
 
-    // set packet metadata
-    restream_renderer->pkt_audio.stream_index = out_stream->index;
-    restream_renderer->pkt_audio.pts = packet_pts;
-    restream_renderer->pkt_audio.dts = packet_pts;
-    restream_renderer->pkt_audio.duration = 0;
-    restream_renderer->pkt_audio.pos = -1;
+    // // set packet metadata
+    // restream_renderer->pkt_audio.stream_index = out_stream->index;
+    // restream_renderer->pkt_audio.pts = packet_pts;
+    // restream_renderer->pkt_audio.dts = packet_pts;
+    // restream_renderer->pkt_audio.duration = 0;
+    // restream_renderer->pkt_audio.pos = -1;
 
-    // set packet payload
-    // restream_renderer->pkt.data = p_time_data;
-    memcpy(restream_renderer->pkt_audio.data, p_time_data, time_data_size);
-    restream_renderer->pkt_audio.size = time_data_size;
+    // // set packet payload
+    // // restream_renderer->pkt.data = p_time_data;
+    // memcpy(restream_renderer->pkt_audio.data, p_time_data, time_data_size);
+    // restream_renderer->pkt_audio.size = time_data_size;
 
-    int ret = av_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
-    // int ret = av_interleaved_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
-    if (ret < 0) {
-        fprintf(stderr, "Error muxing packet\n");
-        exit(1);
-    }
+    // int ret = av_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
+    // // int ret = av_interleaved_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
+    // if (ret < 0) {
+    //     fprintf(stderr, "Error muxing packet\n");
+    //     exit(1);
+    // }
 
-    free(p_time_data);
+    // free(p_time_data);
 }
 
 static void video_renderer_restream_render_buffer(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts, int type) {
@@ -250,41 +251,6 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
 
     uint8_t *modified_data = NULL;
-
-    if (type == 0) {
-        // This reduces the Raspberry Pi H264 decode pipeline delay from about 11 to 6 frames for RPiPlay.
-        // Described at https://www.raspberrypi.org/forums/viewtopic.php?t=41053
-        fprintf(stdout, "Injecting max_dec_frame_buffering\n");
-        int sps_start, sps_end;
-        int sps_size = find_nal_unit(data, data_len, &sps_start, &sps_end);
-        if (sps_size > 0) {
-            const int sps_wiggle_room = 12;
-            const unsigned char nal_marker[] = { 0x0, 0x0, 0x0, 0x1 };
-            int modified_data_len = data_len + sps_wiggle_room + sizeof(nal_marker);
-            modified_data = malloc(modified_data_len);
-
-            h264_stream_t *h = h264_new();
-            h->nal->nal_unit_type = NAL_UNIT_TYPE_SPS;
-            h->sps->vui.bitstream_restriction_flag = 1;
-            h->sps->vui.max_dec_frame_buffering = 4;
-
-            int new_sps_size = write_nal_unit(h, modified_data + sps_start, sps_wiggle_room);
-            if (new_sps_size > 0 && new_sps_size <= sps_wiggle_room) {
-                memcpy(modified_data, data, sps_start);
-                memcpy(modified_data + sps_start + new_sps_size, nal_marker, sizeof(nal_marker));
-                memcpy(modified_data + sps_start + new_sps_size + sizeof(nal_marker), data + sps_start, data_len - sps_start);
-                data = modified_data;
-                data_len = data_len + new_sps_size + sizeof(nal_marker);
-            } else {
-                free(modified_data);
-                modified_data = NULL;
-            }
-            h264_free(h);
-        } else {
-            fprintf(stderr, "Could not find sps boundaries\n");
-            exit(1);
-        }
-    }
 
     // matroska needs monotonically increasing pts
     // packets which contain sps and pps have pts 0, so generate an artificial pts
@@ -312,10 +278,6 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
     if (ret < 0) {
         fprintf(stderr, "Error muxing packet\n");
         exit(1);
-    }
-
-    if (modified_data) {
-        free(modified_data);
     }
 }
 
