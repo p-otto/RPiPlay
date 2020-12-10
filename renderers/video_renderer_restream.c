@@ -28,6 +28,7 @@
 
 #include <libavformat/avformat.h>
 
+#include "h264-bitstream/h264_stream.h"
 #include "fdk-aac/libAACdec/include/aacdecoder_lib.h"
 
 typedef struct video_renderer_restream_s {
@@ -87,6 +88,7 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
 
     static char* out_filename = "test.mkv";
+    // static char* out_filename = "tcp://localhost:9999";
 
     // init format
     avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "matroska", out_filename);
@@ -182,8 +184,6 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
     AAC_DECODER_ERROR error = 0;
     error = aacDecoder_Fill(restream_renderer->audio_decoder, p_buffer, &buffer_size, &bytes_valid);
 
-    fprintf(stdout, "buffer_size: %u, bytes_valid: %u\n", buffer_size, bytes_valid);
-
     if (error != AAC_DEC_OK) {
         fprintf(stderr, "aacDecoder_Fill error\n");
         exit(1);
@@ -207,7 +207,8 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
 
     if (packet_pts == 0) {
         packet_pts = restream_renderer->last_audio_pts + 1;
-    } else if (packet_pts < restream_renderer->last_audio_pts) {
+    } else if (packet_pts <= restream_renderer->last_audio_pts) {
+        fprintf(stdout, "Warning: dropping audio frame to avoid non-monotonic dts\n");
         return;
     }
 
@@ -248,11 +249,49 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
         out_stream->time_base,
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
 
+    uint8_t *modified_data = NULL;
+
+    if (type == 0) {
+        // This reduces the Raspberry Pi H264 decode pipeline delay from about 11 to 6 frames for RPiPlay.
+        // Described at https://www.raspberrypi.org/forums/viewtopic.php?t=41053
+        fprintf(stdout, "Injecting max_dec_frame_buffering\n");
+        int sps_start, sps_end;
+        int sps_size = find_nal_unit(data, data_len, &sps_start, &sps_end);
+        if (sps_size > 0) {
+            const int sps_wiggle_room = 12;
+            const unsigned char nal_marker[] = { 0x0, 0x0, 0x0, 0x1 };
+            int modified_data_len = data_len + sps_wiggle_room + sizeof(nal_marker);
+            modified_data = malloc(modified_data_len);
+
+            h264_stream_t *h = h264_new();
+            h->nal->nal_unit_type = NAL_UNIT_TYPE_SPS;
+            h->sps->vui.bitstream_restriction_flag = 1;
+            h->sps->vui.max_dec_frame_buffering = 4;
+
+            int new_sps_size = write_nal_unit(h, modified_data + sps_start, sps_wiggle_room);
+            if (new_sps_size > 0 && new_sps_size <= sps_wiggle_room) {
+                memcpy(modified_data, data, sps_start);
+                memcpy(modified_data + sps_start + new_sps_size, nal_marker, sizeof(nal_marker));
+                memcpy(modified_data + sps_start + new_sps_size + sizeof(nal_marker), data + sps_start, data_len - sps_start);
+                data = modified_data;
+                data_len = data_len + new_sps_size + sizeof(nal_marker);
+            } else {
+                free(modified_data);
+                modified_data = NULL;
+            }
+            h264_free(h);
+        } else {
+            fprintf(stderr, "Could not find sps boundaries\n");
+            exit(1);
+        }
+    }
+
     // matroska needs monotonically increasing pts
     // packets which contain sps and pps have pts 0, so generate an artificial pts
     if (packet_pts == 0) {
         packet_pts = restream_renderer->last_video_pts + 1;
-    } else if (packet_pts < restream_renderer->last_video_pts) {
+    } else if (packet_pts <= restream_renderer->last_video_pts) {
+        fprintf(stdout, "Warning: dropping video frame to avoid non-monotonic dts\n");
         return;
     }
 
@@ -273,6 +312,10 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
     if (ret < 0) {
         fprintf(stderr, "Error muxing packet\n");
         exit(1);
+    }
+
+    if (modified_data) {
+        free(modified_data);
     }
 }
 
