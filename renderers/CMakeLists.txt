@@ -29,7 +29,6 @@ find_library( VCHIQ_ARM vchiq_arm HINTS ${CMAKE_SYSROOT}/opt/vc/lib/ )
 if( BUILD_RESTREAM )
   set( RENDERER_SOURCES ${RENDERER_SOURCES} audio_renderer_restream.c video_renderer_restream.c )
   set( RENDERER_FLAGS "${RENDERER_FLAGS} -DHAS_RESTREAM_RENDERER")
-  set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} avformat avcodec avutil )
 
   add_subdirectory( fdk-aac )
 
@@ -43,6 +42,18 @@ if( BUILD_RESTREAM )
     fdk-aac/libSBRenc/include
     fdk-aac/libSYS/include )
   set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} fdk-aac )
+  
+  find_path(AVCODEC_INCLUDE_DIR libavcodec/avcodec.h)
+  find_library(AVCODEC_LIBRARY avcodec)
+
+  find_path(AVFORMAT_INCLUDE_DIR libavformat/avformat.h)
+  find_library(AVFORMAT_LIBRARY avformat)
+
+  find_path(AVUTIL_INCLUDE_DIR libavutil/avutil.h)
+  find_library(AVUTIL_LIBRARY avutil)
+  
+  set( RENDERER_LINK_LIBS ${RENDERER_LINK_LIBS} ${AVCODEC_LIBRARY} ${AVFORMAT_LIBRARY} ${AVUTIL_LIBRARY})
+  set( RENDERER_INCLUDE_DIRS ${RENDERER_INCLUDE_DIRS} ${AVCODEC_INCLUDE_DIR} ${AVFORMAT_INCLUDE_DIR} ${AVUTIL_INCLUDE_DIR})
 endif()
 
 if( BRCM_GLES_V2 AND BRCM_EGL AND OPENMAXIL AND BCM_HOST AND VCOS AND VCHIQ_ARM )
