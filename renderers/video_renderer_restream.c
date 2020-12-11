@@ -87,10 +87,12 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.funcs = &video_renderer_restream_funcs;
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
 
-    static char* out_filename = "tcp://localhost:9999";
+    static char* out_filename = "tcp://localhost:9999"; // for tcp (any muxer)
+    // static char *out_filename = "rtsp://localhost:8554/live.sdp"; // for rtsp
 
     // init format
     avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "matroska", out_filename);
+    // avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "rtsp", out_filename);
     if (!renderer->ofmt_ctx) {
         fprintf(stderr, "Could not create output context\n");
         exit(1);
@@ -240,7 +242,6 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
 static void video_renderer_restream_render_buffer(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts, int type) {
     video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
 
-    restream_renderer->pkt.stream_index = 0;
     const AVStream* out_stream = restream_renderer->video_out;
 
     const AVRational timebase_in = av_make_q(1, 1000000);
