@@ -33,9 +33,10 @@
 
 typedef struct video_renderer_restream_s {
     video_renderer_t base;
-    AVFormatContext* ofmt_ctx;
-    AVStream* video_out;
-    AVStream* audio_out;
+    AVFormatContext* video_fmt_ctx;
+    AVFormatContext* audio_fmt_ctx;
+    AVStream* video_stream;
+    AVStream* audio_stream;
     AVPacket pkt;
     AVPacket pkt_audio;
 
@@ -87,67 +88,90 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.funcs = &video_renderer_restream_funcs;
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
 
-    static char* out_filename = "tcp://localhost:9999"; // for tcp (any muxer)
-    // static char *out_filename = "rtsp://localhost:8554/live.sdp"; // for rtsp
+    static char* video_filename = "tcp://localhost:9999"; // for tcp (any muxer)
+    static char* audio_filename = "tcp://localhost:9998";
 
-    // init format
-    avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "matroska", out_filename);
-    // avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "rtsp", out_filename);
-    if (!renderer->ofmt_ctx) {
+    // Video format context
+    avformat_alloc_output_context2(&renderer->video_fmt_ctx, NULL, "matroska", video_filename);
+    if (!renderer->video_fmt_ctx) {
         fprintf(stderr, "Could not create output context\n");
         exit(1);
     }
 
-    // init streams
-    renderer->video_out = avformat_new_stream(renderer->ofmt_ctx, NULL);
-    if (!renderer->video_out) {
+    renderer->video_stream = avformat_new_stream(renderer->video_fmt_ctx, NULL);
+    if (!renderer->video_stream) {
         fprintf(stderr, "Failed allocating output stream\n");
         exit(1);
     }
-    renderer->video_out->codecpar = avcodec_parameters_alloc();
-    renderer->video_out->codecpar->codec_id = AV_CODEC_ID_H264;
-    renderer->video_out->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-    renderer->video_out->codecpar->format = AV_PIX_FMT_YUV420P;
-    renderer->video_out->codecpar->codec_tag = 0;
+    renderer->video_stream->codecpar = avcodec_parameters_alloc();
+    renderer->video_stream->codecpar->codec_id = AV_CODEC_ID_H264;
+    renderer->video_stream->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
+    renderer->video_stream->codecpar->format = AV_PIX_FMT_YUV420P;
+    renderer->video_stream->codecpar->codec_tag = 0;
     // TODO: just testing with these
-    renderer->video_out->codecpar->width = 1920;
-    renderer->video_out->codecpar->height = 1080;
+    renderer->video_stream->codecpar->width = 1920;
+    renderer->video_stream->codecpar->height = 1080;
 
     // mkv expects extradata to be non-empty, for streaming you have to insert NAL units apparently:
     // https://stackoverflow.com/questions/56620131/initializing-an-output-file-for-muxing-mkv-with-ffmpeg
     const int buf_size = 1024;
-    renderer->video_out->codecpar->extradata = (uint8_t*)av_malloc(buf_size);
-    renderer->video_out->codecpar->extradata_size = buf_size;
+    renderer->video_stream->codecpar->extradata = (uint8_t*)av_malloc(buf_size);
+    renderer->video_stream->codecpar->extradata_size = buf_size;
 
-    // renderer->audio_out = avformat_new_stream(renderer->ofmt_ctx, NULL);
-    // if (!renderer->audio_out) {
-    //     fprintf(stderr, "Failed allocating output stream\n");
-    //     exit(1);
-    // }
-    // renderer->audio_out->codecpar = avcodec_parameters_alloc();
-    // // renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_AAC;
-    // renderer->audio_out->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
-    // renderer->audio_out->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
-    // renderer->audio_out->codecpar->codec_tag = 0;
-    // renderer->audio_out->codecpar->sample_rate = 44100;
-    // renderer->audio_out->codecpar->channels = 2;
-    // // renderer->audio_out->codecpar->channel_layout = 0;
-    // renderer->audio_out->codecpar->channel_layout = 0b11;
+    // Audio format context
+    avformat_alloc_output_context2(&renderer->audio_fmt_ctx, NULL, "matroska", audio_filename);
+    // avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "rtsp", out_filename);
+    if (!renderer->audio_fmt_ctx) {
+        fprintf(stderr, "Could not create output context\n");
+        exit(1);
+    }
 
-    AVOutputFormat* ofmt = renderer->ofmt_ctx->oformat;
-    if (!(ofmt->flags & AVFMT_NOFILE)) {
+    renderer->audio_stream = avformat_new_stream(renderer->audio_fmt_ctx, NULL);
+    if (!renderer->audio_stream) {
+        fprintf(stderr, "Failed allocating output stream\n");
+        exit(1);
+    }
+    renderer->audio_stream->codecpar = avcodec_parameters_alloc();
+    // renderer->audio_stream->codecpar->codec_id = AV_CODEC_ID_AAC;
+    renderer->audio_stream->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
+    renderer->audio_stream->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+    renderer->audio_stream->codecpar->codec_tag = 0;
+    renderer->audio_stream->codecpar->sample_rate = 44100;
+    renderer->audio_stream->codecpar->channels = 2;
+    // renderer->audio_stream->codecpar->channel_layout = 0;
+    renderer->audio_stream->codecpar->channel_layout = 0b11;
+
+    // Video output livestream
+    AVOutputFormat* video_ofmt = renderer->video_fmt_ctx->oformat;
+    if (!(video_ofmt->flags & AVFMT_NOFILE)) {
         fprintf(stdout, "Opening output file\n");
 
-        int ret = avio_open(&renderer->ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
+        int ret = avio_open(&renderer->video_fmt_ctx->pb, video_filename, AVIO_FLAG_WRITE);
         if (ret < 0) {
             exit(1);
         }
     }
-    // write header
     AVDictionary *options = NULL;
     av_dict_set(&options, "live", "1", 0);
 
-    int ret = avformat_write_header(renderer->ofmt_ctx, &options);
+    int ret = avformat_write_header(renderer->video_fmt_ctx, &options);
+    if (ret < 0) {
+        fprintf(stderr, "Error occurred when opening output file. Ret: %d\n", ret);
+        exit(1);
+    }
+
+    // Audio output livestream
+    AVOutputFormat* audio_ofmt = renderer->audio_fmt_ctx->oformat;
+    if (!(audio_ofmt->flags & AVFMT_NOFILE)) {
+        fprintf(stdout, "Opening output file\n");
+
+        int ret = avio_open(&renderer->audio_fmt_ctx->pb, audio_filename, AVIO_FLAG_WRITE);
+        if (ret < 0) {
+            exit(1);
+        }
+    }
+
+    ret = avformat_write_header(renderer->audio_fmt_ctx, &options);
     if (ret < 0) {
         fprintf(stderr, "Error occurred when opening output file. Ret: %d\n", ret);
         exit(1);
@@ -177,76 +201,80 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
         return;
     }
 
-    // video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
-    // const AVStream* out_stream = restream_renderer->audio_out;
+    video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
+    const AVStream* out_stream = restream_renderer->audio_stream;
 
-    // // decode AAC-ELD packets
-    // UCHAR *p_buffer[1] = { data };
-    // UINT buffer_size = data_len;
-    // UINT bytes_valid = data_len;
-    // AAC_DECODER_ERROR error = 0;
-    // error = aacDecoder_Fill(restream_renderer->audio_decoder, p_buffer, &buffer_size, &bytes_valid);
+    // decode AAC-ELD packets
+    UCHAR *p_buffer[1] = { data };
+    UINT buffer_size = data_len;
+    UINT bytes_valid = data_len;
+    AAC_DECODER_ERROR error = 0;
+    error = aacDecoder_Fill(restream_renderer->audio_decoder, p_buffer, &buffer_size, &bytes_valid);
 
-    // if (error != AAC_DEC_OK) {
-    //     fprintf(stderr, "aacDecoder_Fill error\n");
-    //     exit(1);
-    // }
+    if (error != AAC_DEC_OK) {
+        fprintf(stderr, "aacDecoder_Fill error\n");
+        exit(1);
+    }
 
-    // INT time_data_size = AUDIO_PACKET_SIZE;
-    // INT_PCM *p_time_data = malloc(time_data_size); // The buffer for the decoded AAC frames
-    // error = aacDecoder_DecodeFrame(restream_renderer->audio_decoder, p_time_data, time_data_size, 0);
-    // if (error != AAC_DEC_OK) {
-    //     fprintf(stderr, "aacDecoder_DecodeFrame error\n");
-    //     exit(1);
-    // }
+    INT time_data_size = AUDIO_PACKET_SIZE;
+    INT_PCM *p_time_data = malloc(time_data_size); // The buffer for the decoded AAC frames
+    error = aacDecoder_DecodeFrame(restream_renderer->audio_decoder, p_time_data, time_data_size, 0);
+    if (error != AAC_DEC_OK) {
+        fprintf(stderr, "aacDecoder_DecodeFrame error\n");
+        exit(1);
+    }
 
-    // // mux decoded PCM data
-    // const AVRational timebase_in = av_make_q(1, 1000000);
-    // int64_t packet_pts = av_rescale_q_rnd(
-    //     pts,
-    //     timebase_in,
-    //     out_stream->time_base,
-    //     AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+    uint64_t ntp_time = raop_ntp_get_local_time(ntp);
 
-    // if (packet_pts == 0) {
-    //     packet_pts = restream_renderer->last_audio_pts + 1;
-    // } else if (packet_pts <= restream_renderer->last_audio_pts) {
-    //     fprintf(stdout, "Warning: dropping audio frame to avoid non-monotonic dts\n");
-    //     return;
-    // }
+    // mux decoded PCM data
+    const AVRational timebase_in = av_make_q(1, 1000000);
+    int64_t packet_pts = av_rescale_q_rnd(
+        ntp_time,//pts,
+        timebase_in,
+        out_stream->time_base,
+        AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
 
-    // restream_renderer->last_audio_pts = packet_pts;
+    if (packet_pts == 0) {
+        packet_pts = restream_renderer->last_audio_pts + 1;
+    } else if (packet_pts <= restream_renderer->last_audio_pts) {
+        fprintf(stdout, "Warning: dropping audio frame to avoid non-monotonic dts\n");
+        return;
+    }
 
-    // // set packet metadata
-    // restream_renderer->pkt_audio.stream_index = out_stream->index;
-    // restream_renderer->pkt_audio.pts = packet_pts;
-    // restream_renderer->pkt_audio.dts = packet_pts;
-    // restream_renderer->pkt_audio.duration = 0;
-    // restream_renderer->pkt_audio.pos = -1;
+    restream_renderer->last_audio_pts = packet_pts;
 
-    // // set packet payload
-    // // restream_renderer->pkt.data = p_time_data;
-    // memcpy(restream_renderer->pkt_audio.data, p_time_data, time_data_size);
-    // restream_renderer->pkt_audio.size = time_data_size;
+    // set packet metadata
+    restream_renderer->pkt_audio.stream_index = out_stream->index;
+    restream_renderer->pkt_audio.pts = packet_pts;
+    restream_renderer->pkt_audio.dts = packet_pts;
+    restream_renderer->pkt_audio.duration = 0;
+    restream_renderer->pkt_audio.pos = -1;
 
-    // int ret = av_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
-    // // int ret = av_interleaved_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
-    // if (ret < 0) {
-    //     fprintf(stderr, "Error muxing packet\n");
-    //     exit(1);
-    // }
+    // set packet payload
+    // restream_renderer->pkt.data = p_time_data;
+    memcpy(restream_renderer->pkt_audio.data, p_time_data, time_data_size);
+    restream_renderer->pkt_audio.size = time_data_size;
 
-    // free(p_time_data);
+    int ret = av_write_frame(restream_renderer->audio_fmt_ctx, &restream_renderer->pkt_audio);
+    // int ret = av_interleaved_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt_audio);
+    if (ret < 0) {
+        fprintf(stderr, "Error muxing packet\n");
+        exit(1);
+    }
+
+    free(p_time_data);
 }
 
 static void video_renderer_restream_render_buffer(video_renderer_t *renderer, raop_ntp_t *ntp, unsigned char *data, int data_len, uint64_t pts, int type) {
     video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
 
-    const AVStream* out_stream = restream_renderer->video_out;
+    const AVStream* out_stream = restream_renderer->video_stream;
+
+    uint64_t ntp_time = raop_ntp_get_local_time(ntp);
 
     const AVRational timebase_in = av_make_q(1, 1000000);
     int64_t packet_pts = av_rescale_q_rnd(
-        pts,
+        ntp_time,//pts,
         timebase_in,
         out_stream->time_base,
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
@@ -275,7 +303,7 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
     restream_renderer->pkt.data = data;
     restream_renderer->pkt.size = data_len;
 
-    int ret = av_interleaved_write_frame(restream_renderer->ofmt_ctx, &restream_renderer->pkt);
+    int ret = av_interleaved_write_frame(restream_renderer->video_fmt_ctx, &restream_renderer->pkt);
     if (ret < 0) {
         fprintf(stderr, "Error muxing packet\n");
         exit(1);
@@ -286,9 +314,14 @@ static void video_renderer_restream_flush(video_renderer_t *renderer) {}
 
 static void video_renderer_restream_destroy(video_renderer_t *renderer) {
     video_renderer_restream_t* restream_renderer = (video_renderer_restream_t*) renderer;
-    av_write_trailer(restream_renderer->ofmt_ctx);
-    avio_closep(&restream_renderer->ofmt_ctx->pb);
-    avformat_free_context(restream_renderer->ofmt_ctx);
+
+    av_write_trailer(restream_renderer->video_fmt_ctx);
+    avio_closep(&restream_renderer->video_fmt_ctx->pb);
+    avformat_free_context(restream_renderer->video_fmt_ctx);
+
+    av_write_trailer(restream_renderer->audio_fmt_ctx);
+    avio_closep(&restream_renderer->audio_fmt_ctx->pb);
+    avformat_free_context(restream_renderer->audio_fmt_ctx);
 
     if (renderer) {
         free(renderer);
