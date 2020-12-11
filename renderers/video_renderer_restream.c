@@ -224,12 +224,12 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
         exit(1);
     }
 
-    uint64_t ntp_time = raop_ntp_get_local_time(ntp);
+    // uint64_t ntp_time = raop_ntp_get_local_time(ntp);
 
     // mux decoded PCM data
     const AVRational timebase_in = av_make_q(1, 1000000);
     int64_t packet_pts = av_rescale_q_rnd(
-        ntp_time,//pts,
+        pts,
         timebase_in,
         out_stream->time_base,
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
@@ -270,11 +270,11 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
 
     const AVStream* out_stream = restream_renderer->video_stream;
 
-    uint64_t ntp_time = raop_ntp_get_local_time(ntp);
+    // uint64_t ntp_time = raop_ntp_get_local_time(ntp);
 
     const AVRational timebase_in = av_make_q(1, 1000000);
     int64_t packet_pts = av_rescale_q_rnd(
-        ntp_time,//pts,
+        pts,
         timebase_in,
         out_stream->time_base,
         AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
