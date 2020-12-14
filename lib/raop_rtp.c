@@ -484,6 +484,10 @@ raop_rtp_thread_udp(void *arg)
                 logger_log(raop_rtp->logger, LOGGER_DEBUG, "raop_rtp audio: ntp = %llu, now = %llu, latency=%lld, rtp=%u",
                            ntp_timestamp, ntp_now, ((int64_t) ntp_now) - ((int64_t) ntp_timestamp), rtp_timestamp);
 
+                if (packetlen <= 16) {
+                    ntp_timestamp = UINT64_MAX;
+                }
+
                 int result = raop_buffer_enqueue(raop_rtp->buffer, packet, packetlen, ntp_timestamp, 1);
                 assert(result >= 0);
 

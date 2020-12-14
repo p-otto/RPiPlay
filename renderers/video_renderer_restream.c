@@ -88,8 +88,8 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.funcs = &video_renderer_restream_funcs;
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
 
-    static char* video_filename = "tcp://localhost:9999"; // for tcp (any muxer)
-    static char* audio_filename = "tcp://localhost:9998";
+    static char* video_filename = "tcp://localhost:9999?listen"; // for tcp (any muxer)
+    static char* audio_filename = "tcp://localhost:9998?listen";
 
     // Video format context
     avformat_alloc_output_context2(&renderer->video_fmt_ctx, NULL, "matroska", video_filename);
@@ -224,8 +224,6 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
         exit(1);
     }
 
-    // uint64_t ntp_time = raop_ntp_get_local_time(ntp);
-
     // mux decoded PCM data
     const AVRational timebase_in = av_make_q(1, 1000000);
     int64_t packet_pts = av_rescale_q_rnd(
@@ -236,8 +234,12 @@ void video_renderer_restream_get_audio(video_renderer_t *renderer, raop_ntp_t *n
 
     if (packet_pts == 0) {
         packet_pts = restream_renderer->last_audio_pts + 1;
+    } else if (packet_pts == UINT64_MAX) {
+        fprintf(stdout, "Warning: no audio PTS sent\n");
+        return;
     } else if (packet_pts <= restream_renderer->last_audio_pts) {
         fprintf(stdout, "Warning: dropping audio frame to avoid non-monotonic dts\n");
+        fprintf(stdout, "Previous: %ld, new: %d\n", restream_renderer->last_video_pts, packet_pts);
         return;
     }
 
@@ -270,8 +272,6 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
 
     const AVStream* out_stream = restream_renderer->video_stream;
 
-    // uint64_t ntp_time = raop_ntp_get_local_time(ntp);
-
     const AVRational timebase_in = av_make_q(1, 1000000);
     int64_t packet_pts = av_rescale_q_rnd(
         pts,
@@ -285,8 +285,9 @@ static void video_renderer_restream_render_buffer(video_renderer_t *renderer, ra
     // packets which contain sps and pps have pts 0, so generate an artificial pts
     if (packet_pts == 0) {
         packet_pts = restream_renderer->last_video_pts + 1;
-    } else if (packet_pts <= restream_renderer->last_video_pts) {
+    }  else if (packet_pts <= restream_renderer->last_video_pts) {
         fprintf(stdout, "Warning: dropping video frame to avoid non-monotonic dts\n");
+        fprintf(stdout, "Previous: %ld, new: %d\n", restream_renderer->last_video_pts, packet_pts);
         return;
     }
 
