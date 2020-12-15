@@ -88,11 +88,25 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->base.funcs = &video_renderer_restream_funcs;
     renderer->base.type = VIDEO_RENDERER_RESTREAM;
 
-    static char* video_filename = "tcp://localhost:9999?listen"; // for tcp (any muxer)
-    static char* audio_filename = "tcp://localhost:9998?listen";
+    static char* base_url = "tcp://localhost:";
+
+    char video_port[10];
+    sprintf(video_port, "%d", config->video_port);
+    char audio_port[10];
+    sprintf(audio_port, "%d", config->audio_port);
+
+    char video_url[40];
+    char audio_url[40];
+    strcpy(video_url, base_url);
+    strcat(video_url, video_port);
+    strcat(video_url, "?listen");
+
+    strcpy(audio_url, base_url);
+    strcat(audio_url, audio_port);
+    strcat(audio_url, "?listen");
 
     // Video format context
-    avformat_alloc_output_context2(&renderer->video_fmt_ctx, NULL, "matroska", video_filename);
+    avformat_alloc_output_context2(&renderer->video_fmt_ctx, NULL, "matroska", video_url);
     if (!renderer->video_fmt_ctx) {
         fprintf(stderr, "Could not create output context\n");
         exit(1);
@@ -119,7 +133,7 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     renderer->video_stream->codecpar->extradata_size = buf_size;
 
     // Audio format context
-    avformat_alloc_output_context2(&renderer->audio_fmt_ctx, NULL, "matroska", audio_filename);
+    avformat_alloc_output_context2(&renderer->audio_fmt_ctx, NULL, "matroska", audio_url);
     // avformat_alloc_output_context2(&renderer->ofmt_ctx, NULL, "rtsp", out_filename);
     if (!renderer->audio_fmt_ctx) {
         fprintf(stderr, "Could not create output context\n");
@@ -146,7 +160,7 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     if (!(video_ofmt->flags & AVFMT_NOFILE)) {
         fprintf(stdout, "Opening output file\n");
 
-        int ret = avio_open(&renderer->video_fmt_ctx->pb, video_filename, AVIO_FLAG_WRITE);
+        int ret = avio_open(&renderer->video_fmt_ctx->pb, video_url, AVIO_FLAG_WRITE);
         if (ret < 0) {
             exit(1);
         }
@@ -165,7 +179,7 @@ video_renderer_t *video_renderer_restream_init(logger_t *logger, video_renderer_
     if (!(audio_ofmt->flags & AVFMT_NOFILE)) {
         fprintf(stdout, "Opening output file\n");
 
-        int ret = avio_open(&renderer->audio_fmt_ctx->pb, audio_filename, AVIO_FLAG_WRITE);
+        int ret = avio_open(&renderer->audio_fmt_ctx->pb, audio_url, AVIO_FLAG_WRITE);
         if (ret < 0) {
             exit(1);
         }

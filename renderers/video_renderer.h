@@ -60,6 +60,8 @@ typedef struct video_renderer_config_s {
     bool low_latency;
     int rotation;
     flip_mode_t flip;
+    int video_port;
+    int audio_port;
 } video_renderer_config_t;
 
 typedef struct video_renderer_s video_renderer_t;
